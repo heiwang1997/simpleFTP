@@ -1,6 +1,6 @@
 all: main.out
 main.out: const.h Server.o Client.o main.o
-	g++ Server.o Client.o main.o -lglog -std=c++11 -o main.out
+	g++ Server.o Client.o main.o -lglog -pthread -std=c++11 -o main.out
 
 main.o: main.cpp
 

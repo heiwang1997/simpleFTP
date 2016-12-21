@@ -6,6 +6,8 @@
 
 #include <vector>
 #include <cstring>
+#include <cstdlib>
+//#define FTP_PASSIVE_MODE
 
 namespace ftp {
 
@@ -35,6 +37,8 @@ namespace ftp {
 
     static const std::string FTP_HELP_MSG = "Available commands are: list, pwd, cd, get, put, quit, halt";
 
+    static const std::string FTP_NAT_IP = "127,0,0,1";
+
     inline void stringSplit(const std::string &s,
                      const std::string &delim,
                      std::vector<std::string> *ret) {
@@ -51,7 +55,7 @@ namespace ftp {
     }
 
     enum FtpCommand {
-        USER, PASS, PORT, LIST, PWD, CWD, RETRIEVE, STORE, RESERVED, HALT, QUIT, HELP
+        USER, PASS, PORT, LIST, PWD, CWD, RETRIEVE, STORE, RESERVED, HALT, QUIT, HELP, PASV, SYST, TYPE, MODE, STRU, NOOP
     };
 
     inline FtpCommand convertToFtpCommand(const std::string& cmd) {
@@ -65,7 +69,13 @@ namespace ftp {
         if (cmd == "STOR") return STORE;
         if (cmd == "HALT") return HALT;
         if (cmd == "HELP") return HELP;
+        if (cmd == "SYST") return SYST;
         if (cmd == "QUIT") return QUIT;
+        if (cmd == "PASV") return PASV;
+        if (cmd == "TYPE") return TYPE;
+        if (cmd == "MODE") return MODE;
+        if (cmd == "STRU") return STRU;
+        if (cmd == "NOOP") return NOOP;
         return RESERVED;
     }
 
@@ -73,6 +83,7 @@ namespace ftp {
         DATA_CONNECTION_OPEN_TRANSFER_START = 125,
 
         HELP_MESSAGE = 214,
+        NAME_SYS_TYPE = 215,
 
         SERVICE_READY = 220,
         SERVICE_CLOSE = 221,
@@ -83,6 +94,8 @@ namespace ftp {
 
         COMMAND_OK = 200,
 
+        PASSIVE_MODE_ON = 227,
+
         USER_NAME_OK_NEED_PASS = 331,
 
         FILE_COMMAND_OK = 250,
@@ -90,6 +103,8 @@ namespace ftp {
         PATHNAME_CREATED = 257,
 
         PERMISSION_DENIED = 500,
+
+        COMMAND_NOT_IMPLEMENTED = 502,
 
         FILE_UNAVAILABLE = 550,
 
@@ -99,7 +114,7 @@ namespace ftp {
 
     static const FtpResponseCode supportedResponseCodes[] = {DATA_CONNECTION_OPEN_TRANSFER_START,
                                                              SERVICE_READY, SERVICE_CLOSE, PATHNAME_CREATED,
-                                                             PERMISSION_DENIED, HELP_MESSAGE,
+                                                             PERMISSION_DENIED, HELP_MESSAGE, PASSIVE_MODE_ON,
             WELCOME, TRANSFER_COMPLETE, COMMAND_OK, USER_NAME_OK_NEED_PASS, FILE_COMMAND_OK, FILE_UNAVAILABLE};
 
     inline FtpResponseCode convertToFtpResponseCode(int code) {
@@ -124,6 +139,10 @@ namespace ftp {
             req = "";
         }
     };
+
+    inline unsigned short getRandomPassiveServerPort() {
+        return (unsigned short) (rand() % 600 + 5000);
+    }
 
 }
 

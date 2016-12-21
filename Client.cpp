@@ -11,19 +11,20 @@
 #include <unistd.h>
 #include <iostream>
 #include <fstream>
+using namespace std;
 
 ftp::Client::Client() {
     command_socket_fd = -1;
     data_connection_fd = -1;
     data_socket_fd = -1;
     authenticated = false;
-    receiveLeft.clear();
+//    receiveLeft.clear();
+    passive_mode = false;
 }
 
 void ftp::Client::startInteractive(const std::string &ipAddr, int port) {
     printf("Welcome to FTP client interactive console v1.0!\n");
     printf("Now connecting to localhost on port %d...\n", FTP_COMMAND_PORT);
-
     int ipOp[4];
     str_vec ipSplit;
     stringSplit(ipAddr, ".", &ipSplit);
@@ -100,6 +101,17 @@ void ftp::Client::startInteractive(const std::string &ipAddr, int port) {
             else if (program == "put") processStoreCommand(argument);
             else if (program == "pwd") processPWDCommand(argument);
             else if (program == "cd") processCDCommand(argument);
+            else if (program == "passive") {
+                if (argument == "on") {
+                    passive_mode = true;
+                    cout << "LOCAL: Passive mode on.\n";
+                } else if (argument == "off") {
+                    passive_mode = false;
+                    cout << "LOCAL: Passive mode off.\n";
+                } else {
+                    cout << "LOCAL: Unrecognized param.\n";
+                }
+            }
             else if (program == "help" || program == "?") processHelpCommand(argument);
             else if (program == "quit") {
                 processQuitCommand(argument);
@@ -124,29 +136,74 @@ void ftp::Client::sendCommand(const std::string &cmd) {
 
 void ftp::Client::setupDataLink() {
 
-    sockaddr_in servaddr;
-    memset(&servaddr, 0, sizeof(servaddr));
+    if (passive_mode) {
+        sendCommand("PASV");
+        string msg;
+        FtpResponseCode code = receiveMessage(msg);
 
-    socklen_t m;
-    bind(data_socket_fd, (sockaddr *) &servaddr, sizeof(servaddr));
-    getsockname(data_socket_fd, (sockaddr *) &servaddr, &m);
+        unsigned long sPos = msg.find_first_of("(");
+        unsigned long ePos = msg.find_first_of(")");
 
-    unsigned int localIP = local_ip;
-    unsigned short localPort = local_data_port; //ntohs(servaddr.sin_port);
+        msg = msg.substr(sPos + 1, ePos - sPos - 1);
 
-    std::cout << localPort << std::endl;
+        int portOp[6];
+        str_vec msgSp;
+        stringSplit(msg, ",", &msgSp);
 
-    std::string portStr = std::to_string(localIP & 0xFF) + "," +
-                          std::to_string((localIP >> 8) & 0xFF) + "," +
-                          std::to_string((localIP >> 16) & 0xFF) + "," +
-                          std::to_string((localIP >> 24) & 0xFF) + "," +
-                          std::to_string((localPort >> 8) & 0xFF) + "," +
-                          std::to_string(localPort & 0xFF);
+        for (int i = 0; i < 6; ++i) {
+            portOp[i] = atoi(msgSp[i].c_str());
+            cout << portOp[i] << endl;
+        }
 
-    sendCommand("PORT " + portStr);
+        in_addr_t ipAddr = (in_addr_t) ((portOp[0] << 24) + (portOp[1] << 16) +
+                                        (portOp[2] << 8) + (portOp[3]));
+        in_port_t inPort = (in_port_t) ((portOp[4] << 8) + portOp[5]);
 
-    listen(data_socket_fd, 10);
-    data_connection_fd = accept(data_socket_fd, (sockaddr *) NULL, NULL);
+        cout << "recv = " << inPort << endl;
+
+        sockaddr_in portLocation;
+
+        memset(&portLocation, 0, sizeof(portLocation));
+
+        portLocation.sin_family = AF_INET;
+        portLocation.sin_port = htons(inPort);
+        portLocation.sin_addr.s_addr = htonl(ipAddr);
+
+        if ((data_passive_socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+            cout << "Socket create error." << endl;
+        }
+
+        if ((connect(data_passive_socket_fd, (sockaddr *) &portLocation, sizeof(portLocation))) < 0) {
+            cout << "Connect error." << errno << endl;
+        }
+        cout << "Connection Established." << endl;
+
+    } else {
+        sockaddr_in servaddr;
+        memset(&servaddr, 0, sizeof(servaddr));
+
+        socklen_t m;
+        bind(data_socket_fd, (sockaddr *) &servaddr, sizeof(servaddr));
+        getsockname(data_socket_fd, (sockaddr *) &servaddr, &m);
+
+        unsigned int localIP = local_ip;
+        unsigned short localPort = local_data_port; //ntohs(servaddr.sin_port);
+
+        std::cout << localPort << std::endl;
+
+        std::string portStr = std::to_string(localIP & 0xFF) + "," +
+                              std::to_string((localIP >> 8) & 0xFF) + "," +
+                              std::to_string((localIP >> 16) & 0xFF) + "," +
+                              std::to_string((localIP >> 24) & 0xFF) + "," +
+                              std::to_string((localPort >> 8) & 0xFF) + "," +
+                              std::to_string(localPort & 0xFF);
+
+        sendCommand("PORT " + portStr);
+
+        listen(data_socket_fd, 10);
+        data_connection_fd = accept(data_socket_fd, (sockaddr *) NULL, NULL);
+    }
+
 }
 
 ftp::FtpResponseCode ftp::Client::receiveMessage(std::string &msg) {
@@ -220,18 +277,19 @@ void ftp::Client::processHaltCommand(const std::string& arg) {
 }
 
 void ftp::Client::receiveViaDataConnection(std::ostream &ostream) {
+    int connect_id = (passive_mode)? data_passive_socket_fd : data_connection_fd;
     fileTrunk* ft = new fileTrunk();
 
     unsigned int sizeToRead;
     do {
-        recv(data_connection_fd, ft, 4, 0);
+        recv(connect_id, ft, 4, 0);
         sizeToRead = ntohl(ft->size);
 
         unsigned int leftSizeToRead = sizeToRead;
         unsigned int payloadOffset = 0;
 
         while (leftSizeToRead != 0) {
-            unsigned int realSizeRead = recv(data_connection_fd,
+            unsigned int realSizeRead = recv(connect_id,
                                              ft->payload + payloadOffset, leftSizeToRead, 0);
             leftSizeToRead -= realSizeRead;
             payloadOffset += realSizeRead;
@@ -244,10 +302,13 @@ void ftp::Client::receiveViaDataConnection(std::ostream &ostream) {
 }
 
 void ftp::Client::tearDownDataLink() {
-    close(data_connection_fd);
+    if (passive_mode) close(data_passive_socket_fd);
+    else close(data_connection_fd);
 }
 
 void ftp::Client::sendViaDataConnection(std::istream &istream) {
+
+    int connect_id = (passive_mode)? data_passive_socket_fd : data_connection_fd;
 
     fileTrunk* ft = new fileTrunk();
     ft->size = htonl(FILE_TRANSFER_BUFFER);
@@ -258,10 +319,10 @@ void ftp::Client::sendViaDataConnection(std::istream &istream) {
         if (istream.eof()) {
             unsigned int sendSize = (unsigned int) istream.gcount();
             ft->size = htonl(sendSize);
-            send(data_connection_fd, ft, sendSize + 4, 0);
+            send(connect_id, ft, sendSize + 4, 0);
             break;
         }
-        send(data_connection_fd, ft, FILE_TRANSFER_BUFFER + 4, 0);
+        send(connect_id, ft, FILE_TRANSFER_BUFFER + 4, 0);
     }
 
     delete ft;

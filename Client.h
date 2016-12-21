@@ -19,9 +19,13 @@ class Client {
 
     int data_connection_fd;
 
+    int data_passive_socket_fd;
+
     unsigned short local_data_port;
 
     unsigned int local_ip;
+
+    bool passive_mode;
 
     bool authenticated;
 
